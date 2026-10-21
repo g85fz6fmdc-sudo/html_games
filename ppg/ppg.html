@@ -199,7 +199,7 @@
           dataUrl: urls[0],
           frameworkUrl: urls[3],
           codeUrl: urls[1],
-          streamingAssetsUrl: "StreamingAssets",
+          streamingAssetsUrl: new URL("StreamingAssets", document.baseURI).href,
           companyName: "Studio Minus",
           productName: "People Playground",
           productVersion: "1",
