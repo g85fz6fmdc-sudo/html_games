@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>People Playground</title>
+  <link rel="shortcut icon" href="favicon.ico">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    #xp-loader {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 260px;
+      background: #ece9d8;
+      border: 2px solid #3a6ea5;
+      box-shadow: 0 0 0 3px #ffffff inset;
+      font-family: Tahoma, sans-serif;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #xp-loader-title {
+      background: linear-gradient(#2b74c7, #1a4a9c);
+      color: white;
+      padding: 4px 8px;
+      font-size: 14px;
+    }
+    #xp-loader-bar {
+      width: 100%;
+      height: 18px;
+      border: 1px solid #3a6ea5;
+      background: white;
+      overflow: hidden;
+    }
+    #xp-loader-fill {
+      width: 0%;
+      height: 100%;
+      background: #4a8be0;
+    }
+    #unity-loading-bar {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="xp-loader">
+    <div id="xp-loader-title">Loading..</div>
+    <div id="xp-loader-bar"><div id="xp-loader-fill"></div></div>
+    <div id="xp-loader-text">0%</div>
+  </div>
+
+  <div id="unity-container">
+    <canvas id="unity-canvas" width="960" height="600" tabindex="-1"></canvas>
+    <div id="unity-warning"></div>
+  </div>
+
+  <script>
+    // Everything below is loaded from the SAME folder as this html file.
+    // The big files are stored as split parts (pggbog.data.part1..7, pggbog.wasm.part1..3)
+    // and stitched back together in the browser. No requests go to any other site.
+    var BUILD = {
+      loader:    "pggbog.loader.js",
+      framework: "pggbog.framework.js",
+      data: { name: "pggbog.data", parts: 7, type: "application/octet-stream" },
+      wasm: { name: "pggbog.wasm", parts: 3, type: "application/wasm" }
+    };
+
+    var canvas = document.querySelector("#unity-canvas");
+    var xpBox = document.querySelector("#xp-loader");
+    var xpTitle = document.querySelector("#xp-loader-title");
+    var xpFill = document.querySelector("#xp-loader-fill");
+    var xpText = document.querySelector("#xp-loader-text");
+    var warningBanner = document.querySelector("#unity-warning");
+
+    function unityShowBanner(msg, type) {
+      function updateBannerVisibility() {
+        warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+      }
+      var div = document.createElement('div');
+      div.textContent = msg;
+      warningBanner.appendChild(div);
+      if (type == 'error') div.style = 'background: red; padding: 10px;';
+      else {
+        if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+        setTimeout(function () {
+          warningBanner.removeChild(div);
+          updateBannerVisibility();
+        }, 5000);
+      }
+      updateBannerVisibility();
+    }
+
+    function setProgress(pct, label) {
+      xpFill.style.width = pct + "%";
+      xpText.textContent = label || (Math.round(pct) + "%");
+    }
+
+    var totalParts = BUILD.data.parts + BUILD.wasm.parts;
+    var doneParts = 0;
+
+    async function mergeParts(file) {
+      var buffers = [];
+      for (var i = 1; i <= file.parts; i++) {
+        var res = await fetch(file.name + ".part" + i);
+        if (!res.ok) throw new Error("Missing file: " + file.name + ".part" + i + " (" + res.status + ")");
+        buffers.push(await res.arrayBuffer());
+        doneParts++;
+        setProgress((doneParts / totalParts) * 50, "Downloading " + doneParts + "/" + totalParts);
+      }
+      return URL.createObjectURL(new Blob(buffers, { type: file.type }));
+    }
+
+    // Ask the browser not to throw away saved data (contraptions) when it's low on space.
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(function () {});
+    }
+
+    // Unity keeps saves in an in-memory filesystem that is mirrored into IndexedDB.
+    // Flush it regularly so contraptions survive closing the tab.
+    function startSaveSync(instance) {
+      var FS = (instance && instance.Module && instance.Module.FS) || window.FS;
+      if (!FS || !FS.syncfs) return;
+      var busy = false;
+      function flush() {
+        if (busy) return;
+        busy = true;
+        try { FS.syncfs(false, function () { busy = false; }); }
+        catch (e) { busy = false; }
+      }
+      setInterval(flush, 10000);
+      document.addEventListener("visibilitychange", function () { if (document.hidden) flush(); });
+      window.addEventListener("pagehide", flush);
+    }
+
+    if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+      var meta = document.createElement('meta');
+      meta.name = 'viewport';
+      meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+      document.getElementsByTagName('head')[0].appendChild(meta);
+    }
+
+    (async function () {
+      try {
+        var urls = await Promise.all([mergeParts(BUILD.data), mergeParts(BUILD.wasm)]);
+
+        var config = {
+          dataUrl: urls[0],
+          frameworkUrl: BUILD.framework,
+          codeUrl: urls[1],
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "Studio Minus",
+          productName: "People Playground",
+          productVersion: "1",
+          showBanner: unityShowBanner
+        };
+
+        var script = document.createElement("script");
+        script.src = BUILD.loader;
+        script.onload = function () {
+          createUnityInstance(canvas, config, function (progress) {
+            setProgress(50 + progress * 50);
+          }).then(function (unityInstance) {
+            xpBox.style.display = "none";
+            startSaveSync(unityInstance);
+          }).catch(function (message) {
+            alert(message);
+          });
+        };
+        script.onerror = function () { alert("Missing file: " + BUILD.loader); };
+        document.body.appendChild(script);
+      } catch (err) {
+        xpTitle.textContent = "Error";
+        xpText.textContent = String(err.message || err);
+      }
+    })();
+  </script>
+</body>
+</html>
